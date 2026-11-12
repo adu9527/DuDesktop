@@ -67,14 +67,14 @@ v1 依赖 Explorer 提供桌面基础设施，属于桌面增强层，不注册�
 |---|---|---|
 | 语言 | Rust edition 2024，`windows` crate | 确定；原生 FFI/COM 封装集中管理 |
 | 窗口 | 原生 Win32，自持 HWND | 确定；控制焦点、层级、命中区域、DPI 与桌面附着 |
-| GPU 渲染 | wgpu / D3D12 优先 | 候选主路径；通过 M0 的透明合成、调度、设备恢复原型后冻结版本 |
+| GPU 渲染 | M0 采用原生 D3D11/DirectComposition；wgpu/D3D12 为候选 | 已按 ADR 0001 选择原生路径；引入复杂 UI 或特效时再单独评估 wgpu 互操作 |
 | 透明合成 | DirectComposition + DXGI composition swap chain 优先验证 | 官方原生合成路径；wgpu 接入、纹理/队列所有权必须单独验证，不能假设普通 surface 自动满足 |
-| UI | egui + egui_wgpu 起步 | 验证中文输入、键盘焦点、缩放、无障碍与动效；业务模型不依赖 egui 类型 |
-| 视频 | 壁纸宿主内 libmpv，D3D11 硬解，v1 使用窗口嵌入 | 锁定发行构建、C API 与 Rust 绑定；独立设备与呈现，不声称共享 UI 的 wgpu Device |
+| UI | M3 采用原生 Win32 + DirectComposition/Direct2D 面板；egui 待文本输入 UI 时评估 | Dock/灵动岛/应用库已验证透明、命中、键盘与空闲停帧；业务模型不依赖 UI 类型。完整中文 IME 与无障碍在引入可编辑控件时单独验收（ADR 0005） |
+| 视频 | 壁纸宿主内 libmpv，D3D11 硬解，v1 使用窗口嵌入 | 已固定 zhongfly 2026-11-10 构建（mpv v0.42.0-36、client API 2.6）并实测 d3d11va；render API/纹理互操作留待 M5（ADR 0003） |
 | Shell | Win32/COM + Windows Shell API | WorkerW 兼容适配、应用发现、桌面文件、OLE、托盘 |
-| 文件监听 | notify + 快照校验 | 监听是增量提示，扫描快照是最终一致性依据 |
+| 文件监听 | `ReadDirectoryChangesW` + 快照校验 | 监听是增量提示，扫描快照是最终一致性依据；首版不引入 notify 依赖 |
 | 持久化 | serde + 带版本 TOML | 配置原子写入、迁移备份；缓存放 LOCALAPPDATA，用户配置放 APPDATA |
-| IPC | 本机命名管道 + 类型化版本协议 | 传命令与状态，不在 v1 跨进程传逐帧像素 |
+| IPC | 本机命名管道 + 类型化版本协议 | M4 使用协议 v4（新增静态呈现与播放位置）、请求超时、宿主代次、配置版本与当前用户 DACL（ADR 0002）；不在 v1 跨进程传逐帧像素 |
 
 ### 3.1 图形路径选择原则
 
@@ -195,6 +195,8 @@ v1 基础交付 UI 动效及关闭开关；图片后处理和一组内建程序�
 
 验证失败仍保留视频直接播放和图片/程序化效果，不把未经验证的视频后处理作为基础播放的必经路径。
 
+M5 实测更新（2026-11-11）：固定 libmpv 构建导出完整 D3D11 render API，并按 `render_d3d11.h` ABI 成功在调用方设备上创建 render 上下文、把视频帧写入调用方 `ID3D11Texture2D`；多次 3 秒原型运行 85–87 帧，硬解 `d3d11va`，正常路径每帧 0 次 GPU→CPU→GPU 拷贝，仅结束时 1 次诊断回读。该结果只证明 render API 与同设备纹理路径可用，尚未接入日常播放，也未验证设备失效恢复与显存趋势；因此产品仍保留 mpv 直接播放为视频默认路径。
+
 ## 7. 用户性能控制与自动策略
 
 ### 7.1 两个独立维度
@@ -283,11 +285,49 @@ v1 基础交付 UI 动效及关闭开关；图片后处理和一组内建程序�
 
 - `SHGetKnownFolderPath(FOLDERID_Desktop)` 获取含重定向的用户桌面，同时聚合 `FOLDERID_PublicDesktop`；处理权限失败、同名但不同路径、OneDrive 占位文件。
 - 默认只分类展示文件夹/图片/文档/压缩包/安装包/其他，不移动、不下载云端文件生成缩略图。
-- notify 事件去抖并合并；重命名、写入中、监听溢出/失败、休眠恢复触发增量校验或完整重扫。
+- 目录监听事件去抖并合并；重命名、写入中、监听溢出/失败、休眠恢复触发增量校验或完整重扫。
 - 缩略图后台按可见范围加载、限并发、可取消、有界缓存；慢 Shell 扩展不得阻塞 UI。
 - 基础操作为打开、在资源管理器中定位、复制路径、移入回收站；删除失败保留原条目并反馈。
 - OLE 拖拽使用 Shell 数据对象或规范 `IDataObject`，支持文件列表及源/目标拖拽语义；STA 线程执行 `DoDragDrop`。允许后续交付，但不能以丢失基础访问能力为代价。
 - 回收站等虚拟项目单独提供 Shell 入口，不伪装为普通桌面路径。
+
+### 8.4 M3 实现落点（2026-11-11）
+
+- 主程序 `deskshell app` 持有单实例互斥、隐藏消息窗口、托盘、全局热键与宿主监督；应用发现、图标/缩略图、桌面扫描在后台线程，通过完整快照 + `PostMessage` 回到 UI，不在 UI 线程同步等待 Shell 或 IPC。
+- 应用身份：`AppsFolder` 父相对解析名（打包应用即 AUMID）为主；开始菜单 `.lnk` 使用规范路径；手动添加使用文件路径。启动优先应用激活接口，失败回退 Shell 默认动作；不假设条目都有 exe 路径。
+- Dock 固定项与应用库是两个独立视图；固定项上限 9 个，右键固定/取消/左右移动；应用库独立面板显示前 8 项。Dock/岛体/库共用 `render::panel`，窗口区域裁剪透明区域，非置顶；显式唤起临时 TOPMOST，失焦/Escape 撤销。
+- 桌面文件：用户桌面（含重定向）+ 公共桌面，完整路径身份；分类仅展示；隐藏/系统/desktop.ini 跳过；云占位只列元数据。监听使用 `ReadDirectoryChangesW` 重叠 I/O，150 ms 去抖；监听失败退回快照轮询。
+- 缩略图：只加载可见前 8 行，单请求 1.5 s 超时，无法取消的 Shell 线程超时后隔离；累计 2 次后停止请求并提示降级。缓存只保留可见行。
+- 首次引导在文件入口就绪后询问隐藏桌面图标；修改前写 `ShellStateJournal`，托盘常驻恢复入口。边缘唤起与 OLE 拖拽未实现，按计划延期，不提供假入口。
+
+### 8.5 M4 实现落点（2026-11-11）
+
+- 配置 `crates/deskshell/src/config.rs` 版本 2：APPDATA 用户配置；保存前备份 `.prev`，损坏时从 `.prev` 恢复；v1 迁移写 `.bak`；未知字段递归保留；更高版本只读；原子写入。安装目录与可再生成数据属于 LOCALAPPDATA，不写用户配置。
+- 画质 `crates/deskshell/src/policy.rs` 是纯逻辑：`QualityProfile`（用户意图）与 `EffectivePolicy`（每屏生效值）分离；自动规则进入 1.5 s、恢复 30 s、冷却 10 s；原因优先级与逐屏作用域有确定性单测。
+- 平台信号 `crates/shell-win/src/system_state.rs`：前台窗口与显示器矩形比较、DWM cloaked、最小化、Shell 类排除、进程名、电源/远程会话；只读，不截图。自动规则全部关闭时 UI 停止 2 s 采样定时器。
+- 协议 v4：`RenderOptions.playback` 与 `PlaybackState::Static`；Eco/自动降档让 mpv 停在当前帧，保留 `player_active`，`video_position_ms` 用于证明不推进。用户暂停仍由 `paused` 表达。
+- 面板阴影 `crates/render/src/panel/shadow.rs`：独立分层窗口 + 静态 DIB，`WM_NCHITTEST` 穿透；关闭销毁窗口/位图。它是阴影，不是背景模糊；模糊留给 M5 Render Graph。
+- 托盘与设置入口 `crates/deskshell/src/app/app_ui.rs`：画质、效果、自动规则、逐屏覆盖、素材选择、状态/故障、开机启动、恢复桌面/图标；未交付项以置灰原因显示。文件选择走原生对话框，状态框按需读取宿主快照。
+- 开机启动 `crates/shell-win/src/autostart.rs`：HKCU Run 用户级值；安装/卸载脚本 `scripts/install.ps1`、`scripts/uninstall.ps1` 不写用户配置，卸载先让程序恢复其 Shell 修改。
+- 性能 `crates/deskshell/src/perf_check.rs`：真实产品进程树的 `GetProcessTimes` + 墙钟，整机归一与单核百分比分开，逐进程明细、DWM 尝试、遗留宿主与 JSON 报告；正式验收只接受 release 与 300 秒测量。
+
+### 8.6 M5 实现落点（2026-11-11）
+
+- `crates/render/src/graph.rs`：Render Graph 纯逻辑。节点声明 pass、输入/输出纹理槽、时间依赖、分辨率与资源成本；按效果开关裁剪；`FrameCache` 以计划/素材版本/尺寸/时间片为键跳过无变化帧；`TexturePool` 记账预算，Bloom 超预算先降级，基础缓冲超限拒绝。单测不依赖 GPU。
+- `crates/render/src/effects/`：WIC 解码到 BGRA8（尺寸/内存上限）、内嵌 HLSL 经系统 `d3dcompiler_47.dll` 运行时编译、全屏三角、调色/暗角/可分离模糊/Bloom/粒子/渐变、DXGI flip 交换链、GPU timestamp 查询与一次诊断回读。静态效果只 Present 一次；粒子只在宿主 Animate 时按 33 ms 调度。
+- `crates/wallpaper-host/src/instance.rs`：图片且效果启用时选择 `RenderPath::GpuEffects`，否则保持 mpv；切换效果开关会重建或释放管线；失败记录 `effects_error` 并回退 mpv；停止/切源/Explorer 重建/退出释放 D3D11 资源。
+- 协议 v5 与配置 v3：效果强度 0..=100；`InstanceStatus` 暴露 `render_path/effects/effects_active/effects_error/effect_passes/present_count/gpu_time_us`；配置迁移保留 `.v2-<时间>.bak`。
+- 视频互操作 `wallpaper-host --interop-check`：固定 libmpv `MPV_RENDER_API_TYPE_D3D11`，同设备渲染到调用方纹理；原型数据见 6.3。未接入日常播放，不作为已交付的视频效果。
+- 已知边界：本机 AMD 780M 的 timestamp start/end 恒 0，GPU 时间报告不可用；CPU/墙钟另行测量。真实设备重置、NVIDIA/Intel/多屏/DPI、HDR 与长稳未验证。
+
+### 8.7 M6 实现落点（2026-11-11）
+
+- 控制通道 `crates/deskshell/src/control.rs`：单实例命名管道服务端 + CLI 客户端；当前用户 DACL、拒绝远程；请求/响应为 JSON，经事件唤醒 UI 线程处理，管道线程不直接修改状态。命令覆盖状态、暂停/恢复、设置壁纸、预设、恢复桌面、退出、诊断导出与素材导出；退出码稳定。
+- 诊断 `crates/deskshell/src/diagnostics.rs`：LOCALAPPDATA 下 JSON 行日志，2 MiB × 5 滚动；导出由用户主动触发，合并应用状态、宿主快照、Windows build、DXGI 拓扑与最近日志，原子写入。
+- 素材迁移：`--managed` 复制到 LOCALAPPDATA assets 并保留 original_source，默认引用原文件；`last_good_source` 在缺失时回退；配置 `.prev` 与迁移 `.bak` 保持可回滚。`assets export` 提供配置快照、素材与 manifest，导入复用 `set-wallpaper --managed`。
+- 安装/升级/回滚：安装器在覆盖前备份旧二进制到 `previous`，`rollback.ps1` 恢复上一版本；运行中默认拒绝替换，避免播放期间替换已加载 DLL。没有在线更新器，因此不提供自动更新开关。
+- 发布：`scripts/package-release.ps1` 使用 `--release --locked`，校验 libmpv 固定哈希，打包 GPLv2 文本、第三方源码提供说明、安装/卸载/回滚脚本、`manifest.json` 与 `SHA256SUMS`；只产出本地候选包，不伪造签名。
+- 兼容与长稳：`compat-report.ps1` 采集 OS/GPU/驱动/显示器；`soak-check.ps1` 采样进程树内存/句柄/线程/CPU 并循环切源、暂停、宿主强杀。24/72 小时、多厂商、多屏/DPI、HDR 与真实设备失效仍未验收。
 
 ## 9. 长期维护与兼容性
 
@@ -346,6 +386,9 @@ M0–M2 是技术决策关卡；失败则修订具体后端，不绕过验收。
 
 ### 本次明确的方向
 
+- 2026-11-11：M0 后端决策见 [ADR 0001](docs/adr/0001-m0-composition-path.md)。桌面壳层采用已验证的原生 DirectComposition；wgpu/egui 延后到引入复杂 UI 或效果时再验证。
+- 2026-11-11：M1 IPC、监督与生命周期决策见 [ADR 0002](docs/adr/0002-m1-ipc-and-host-supervision.md)；固定 libmpv 构建、动态加载与窗口嵌入播放见 [ADR 0003](docs/adr/0003-m1-libmpv-integration.md)。M1 不使用 mpv D3D11 render API 或逐帧回读，视频纹理互操作仍按第 6.3 节在 M5 独立验证。
+- 2026-11-11：M2 桌面附着见 [ADR 0004](docs/adr/0004-m2-desktop-attachment.md)；M3 原生面板、应用/文件发现与图标隔离见 [ADR 0005](docs/adr/0005-m3-ui-and-shell-integration.md)。
 - 产品追求长期可用与高视觉上限，低开销模式和自由调节是核心能力。
 - 主进程 + 壁纸宿主，v1 视频使用 mpv 直接呈现。
 - 渲染后端可演进；wgpu/D3D12 优先原型，DirectComposition 接入不能省略验证。

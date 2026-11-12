@@ -7,7 +7,9 @@ publish.workspace = true
 
 [dependencies]
 protocol.workspace = true
-serde_json.workspace = true
+render.workspace = true
+shell-win.workspace = true
+windows.workspace = true
 
 [lints]
 workspace = true

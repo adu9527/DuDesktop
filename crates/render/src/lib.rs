@@ -1,4 +1,31 @@
-//! 渲染边界骨架。M0 原型通过前不固定 wgpu/DirectComposition 实现。
+//! 渲染边界。M0 原型通过前不固定 wgpu/DirectComposition 实现。
+
+mod capsule;
+pub mod effects;
+mod gpu;
+pub mod graph;
+pub mod panel;
+mod probe;
+mod settings;
+mod surface;
+mod theme;
+mod widgets;
+
+pub use capsule::{CapsuleOptions, run_capsule_prototype};
+pub use effects::{EffectError, EffectPipeline, RenderStats};
+pub use graph::{EffectKind, EffectPlan, FitMode, ImageEffects, PassKind};
+pub use panel::{
+    DockStyle, IconPixels, IslandTab, PanelAction, PanelEvent, PanelIcon, PanelItem, PanelKind,
+    PanelOptions, PanelView, PanelWindow,
+};
+pub use probe::{AdapterInfo, DisplayTopology, OutputInfo, ProbeError, probe_displays};
+pub use settings::{
+    SettingsEvent, SettingsGroup, SettingsItem, SettingsItemKind, SettingsView, SettingsWindow,
+};
+pub use widgets::{
+    ControlsView, MusicView, WeatherView, WidgetEvent, WidgetItem, WidgetKind, WidgetSpec,
+    WidgetView, WidgetWindow,
+};
 
 /// 品牌只用于诊断；功能启用必须依据探测到的能力。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

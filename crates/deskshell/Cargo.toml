@@ -8,8 +8,11 @@ publish.workspace = true
 [dependencies]
 protocol.workspace = true
 render.workspace = true
-shell-win.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+shell-win.workspace = true
+toml.workspace = true
+windows.workspace = true
 
 [lints]
 workspace = true

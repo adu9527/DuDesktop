@@ -1,3 +1,9 @@
 /target/
 /.vs/
 *.log
+/.cache/
+/third_party/mpv/
+/testdata/
+/.screenshots/
+/.trae/
+/artifacts/

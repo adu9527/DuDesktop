@@ -1,0 +1,38 @@
+DeskShell 第三方组件与许可证说明
+==================================
+
+本文件随 DeskShell 候选发布包提供，适用于包内 `libmpv-2.dll` 及其依赖。
+DeskShell 自身代码的许可证以仓库根目录的许可证文件（如有）为准；本文件只说明
+随包分发的第三方二进制。
+
+1. libmpv / mpv
+---------------
+- 组件：libmpv-2.dll（Windows x64）
+- 版本：mpv v0.42.0-36-gd075ec2a2，client API 2.6
+- 构建来源：zhongfly/mpv-winbuild，release 2026-11-10-d075ec2a28
+  https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-11-10-d075ec2a28
+- SHA-256：0586211ed50e6c1b8eeb01952f7d812b205d81bc678f280810759d62e56bf545
+- 许可证：GPLv2 或更高版本（GPLv2+）。完整许可证文本见同目录 `GPL-2.0.txt`。
+- 该二进制由上游构建，未由 DeskShell 修改。对应源码可从上游 release/commit 获取：
+  https://github.com/mpv-player/mpv/tree/d075ec2a28
+  构建脚本与依赖版本见：
+  https://github.com/zhongfly/mpv-winbuild
+
+2. 源码提供（GPLv2 第 3 节）
+----------------------------
+对于本包分发的 libmpv 二进制，DeskShell 提供对应的完整源码获取方式：
+
+- 首选：从上述上游仓库下载与二进制对应的源码与构建脚本；
+- 如上游地址不可用，可通过 DeskShell 的发布渠道联系维护者，免费获取对应源码
+  （仅收取介质/传输成本，有效期自本包发布之日起三年）。
+
+本包不分发修改过的 libmpv；如未来修改，将在发布说明中提供修改后的源码。
+
+3. FFmpeg 与其他依赖
+--------------------
+libmpv 构建内含 FFmpeg 及其他第三方库，其许可证与源码信息由上述上游构建
+提供。分发时不得移除本说明或 `GPL-2.0.txt`。
+
+4. 无担保
+---------
+本软件按“现状”提供，不附带任何明示或暗示担保。使用本软件造成的风险由用户承担。
